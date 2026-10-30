@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: platform-dev
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+configMapGenerator:
+  - name: platform-api-config
+    behavior: merge
+    literals:
+      - APP_ENVIRONMENT=dev
+      - APP_LOG_LEVEL=DEBUG
+
+images:
+  - name: platform-api
+    newTag: 1.0.0

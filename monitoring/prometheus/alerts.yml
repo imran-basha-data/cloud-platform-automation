@@ -1,0 +1,80 @@
+groups:
+  - name: platform-api.availability
+    rules:
+      - alert: PlatformApiDown
+        expr: up{job="platform-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Platform API target {{ $labels.instance }} is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for over 1 minute."
+          runbook: "k8s/README.md#rollback-procedure"
+
+      - alert: PlatformApiNotReady
+        expr: app_ready == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Platform API instance {{ $labels.instance }} is not ready"
+          description: "The instance has reported not ready for 5 minutes and receives no traffic. Check /readyz for the failing check."
+
+      - alert: PlatformApiDependencyDown
+        expr: app_dependency_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Downstream dependency unreachable from {{ $labels.instance }}"
+          description: "Readiness is failing because the configured dependency has not answered for 5 minutes."
+
+      - alert: PlatformApiMaintenanceModeLeftOn
+        expr: app_maintenance_mode == 1
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Maintenance mode has been on for 30 minutes on {{ $labels.instance }}"
+          description: "Someone may have forgotten to put this instance back into rotation."
+
+  - name: platform-api.slo
+    rules:
+      # Recording rules keep dashboards and alerts on one definition.
+      - record: job:http_requests:rate5m
+        expr: sum by (job) (rate(http_requests_total{route!~"/metrics|/healthz|/readyz"}[5m]))
+
+      # The "or ... * 0" term yields an explicit 0 when there are no 5xx series,
+      # instead of no data.
+      - record: job:http_request_errors:ratio_rate5m
+        expr: |
+          (
+            sum by (job) (rate(http_requests_total{status=~"5..", route!~"/metrics|/healthz|/readyz"}[5m]))
+            or
+            sum by (job) (rate(http_requests_total{route!~"/metrics|/healthz|/readyz"}[5m])) * 0
+          )
+          /
+          sum by (job) (rate(http_requests_total{route!~"/metrics|/healthz|/readyz"}[5m]))
+
+      - record: job:http_request_duration_seconds:p95_5m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, le) (rate(http_request_duration_seconds_bucket{route!~"/metrics|/healthz|/readyz"}[5m])))
+
+      - alert: PlatformApiHighErrorRate
+        expr: job:http_request_errors:ratio_rate5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5% of Platform API requests are failing"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: PlatformApiHighLatency
+        expr: job:http_request_duration_seconds:p95_5m > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Platform API p95 latency above 500 ms"
+          description: "p95 latency is {{ $value | humanizeDuration }} over the last 5 minutes."

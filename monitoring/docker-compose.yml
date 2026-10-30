@@ -1,0 +1,69 @@
+# Local observability stack: the API, Prometheus (with alert rules) and Grafana
+# (with a provisioned dashboard), plus an optional traffic generator.
+#
+#   docker compose -f monitoring/docker-compose.yml up -d --build
+#   Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (anonymous viewer)
+#   docker compose -f monitoring/docker-compose.yml --profile load up -d loadgen
+
+name: platform-observability
+
+services:
+  api:
+    build: ..
+    image: platform-api:local
+    environment:
+      APP_ENVIRONMENT: dev
+      APP_LOG_FORMAT: json
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on: [api]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-locally}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
+
+  # Mixed traffic: fast, slow and not-found requests so every panel has data.
+  loadgen:
+    image: platform-api:local
+    profiles: [load]
+    read_only: true
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import random, time, urllib.request, urllib.error
+        while True:
+            path = random.choice(["/api/v1/info"] * 6 + ["/api/v1/work?ms=120", "/api/v1/work?ms=700", "/missing"])
+            try:
+                urllib.request.urlopen("http://api:8080" + path, timeout=5).read()
+            except urllib.error.HTTPError:
+                pass
+            time.sleep(0.05)
+    depends_on: [api]

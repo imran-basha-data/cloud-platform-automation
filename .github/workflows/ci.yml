@@ -145,3 +145,43 @@ jobs:
           kubectl -n platform-dev describe deployment platform-api
           kubectl -n platform-dev get events --sort-by=.lastTimestamp | tail -40
           kubectl -n platform-dev logs -l app.kubernetes.io/component=api --tail=50 --prefix
+
+  terraform:
+    name: Terraform fmt, validate and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - name: terraform fmt
+        run: terraform fmt -recursive -check -diff
+      - name: terraform init (no backend, no credentials)
+        run: terraform init -backend=false -input=false
+      - name: terraform validate
+        run: terraform validate
+      - name: terraform test (mocked azurerm provider, plan only)
+        run: terraform test -verbose
+
+  iac-scan:
+    name: IaC security scan (Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install checkov==3.4.0
+      - name: Render Kubernetes overlays
+        run: |
+          mkdir -p rendered
+          for overlay in dev prod; do kubectl kustomize "k8s/overlays/$overlay" > "rendered/$overlay.yaml"; done
+      - name: Checkov Terraform
+        run: checkov -d terraform --framework terraform --compact --quiet
+      - name: Checkov Kubernetes (rendered overlays)
+        run: checkov -d rendered --framework kubernetes --compact --quiet
+      - name: Checkov Dockerfile
+        run: checkov -f Dockerfile --framework dockerfile --compact --quiet

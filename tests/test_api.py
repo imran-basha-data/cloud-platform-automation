@@ -208,3 +208,26 @@ def test_uvicorn_logs_use_the_structured_formatter() -> None:
     assert server_logger.propagate is True
     assert logging.getLogger("uvicorn.access").disabled is True
     logging.getLogger().handlers.clear()
+
+
+def test_ready_metric_is_correct_without_probe_traffic() -> None:
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    with client_for(admin_token=TOKEN) as c:
+        # No call to /readyz: the gauge must still reflect the real state.
+        assert "app_ready 1.0" in c.get("/metrics").text
+        c.post("/api/v1/admin/maintenance", json={"enabled": True}, headers=auth)
+        assert "app_ready 0.0" in c.get("/metrics").text
+    with client_for(startup_delay_s=30) as c:
+        assert "app_ready 0.0" in c.get("/metrics").text
+
+
+def test_ready_metric_waits_for_first_dependency_check() -> None:
+    healthy = httpx.MockTransport(lambda request: httpx.Response(200))
+    with _client_with_dependency(healthy) as c:
+        assert "app_ready 0.0" in c.get("/metrics").text  # unknown until checked
+        c.get("/readyz")
+        assert "app_ready 1.0" in c.get("/metrics").text
+
+
+def test_dependency_metric_only_exported_when_configured(client: TestClient) -> None:
+    assert "app_dependency_up" not in client.get("/metrics").text

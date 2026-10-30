@@ -12,8 +12,14 @@ run "aks_is_locked_down" {
   }
 
   variables {
-    name                       = "aks-platform-dev"
-    resource_group_name        = "rg-platform-dev"
+    name                      = "aks-platform-dev"
+    resource_group_name       = "rg-platform-dev"
+    control_plane_identity_id = "/subscriptions/x/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks"
+    kubelet_identity = {
+      id        = "/subscriptions/x/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/kubelet"
+      client_id = "00000000-0000-0000-0000-000000000011"
+      object_id = "00000000-0000-0000-0000-000000000012"
+    }
     location                   = "uksouth"
     tenant_id                  = "00000000-0000-0000-0000-000000000001"
     sku_tier                   = "Free"
@@ -29,6 +35,10 @@ run "aks_is_locked_down" {
   assert {
     condition     = azurerm_kubernetes_cluster.this.local_account_disabled
     error_message = "static admin credentials must be disabled"
+  }
+  assert {
+    condition     = azurerm_kubernetes_cluster.this.identity[0].type == "UserAssigned" && azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id == "00000000-0000-0000-0000-000000000012"
+    error_message = "cluster must use the pre-created control plane and kubelet identities"
   }
   assert {
     condition     = azurerm_kubernetes_cluster.this.azure_active_directory_role_based_access_control[0].azure_rbac_enabled

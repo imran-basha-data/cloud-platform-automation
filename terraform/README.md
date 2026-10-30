@@ -14,7 +14,7 @@ flowchart LR
         LAW["Log Analytics<br/>Container Insights"]
     end
     AKS -- "AcrPull (kubelet identity)" --> ACR
-    AKS -- "Secrets User (CSI driver identity)" --> KV
+    AKS -- "Secrets User (platform-api workload identity)" --> KV
     AKS -- "oms_agent" --> LAW
     VNET --- AKS
 ```
@@ -27,7 +27,15 @@ flowchart LR
 | `key_vault` | Key Vault | RBAC authorisation, purge protection, 90-day soft delete, firewall **default Deny** (AKS subnet + operator IPs only) |
 | `aks` | AKS cluster + `apps` user node pool | Entra ID + Azure RBAC only (local accounts disabled), workload identity, Azure Policy, network policy, autoscaling, encryption at host, auto patch upgrades, Key Vault CSI driver, authorised API IP ranges, system pool limited to critical add-ons |
 
-The root module grants **AcrPull** to the kubelet identity and **Key Vault Secrets User** to the CSI driver identity, so no registry passwords or secret values are handled.
+Identities are **created before the cluster** as user-assigned managed identities, so every role assignment exists before AKS needs it:
+
+| Identity | Granted | Why |
+|---|---|---|
+| AKS control plane | Managed Identity Operator on the kubelet identity; Network Contributor on the AKS subnet | assign the kubelet identity to nodes; manage Azure CNI networking |
+| Kubelet | AcrPull on the registry | nodes pull images without registry passwords |
+| `platform-api` workload | Key Vault Secrets User on the vault, via a federated credential trusting `system:serviceaccount:platform-<env>:platform-api` | the app reads only its own secrets with short-lived tokens; no shared add-on identity |
+
+To use the workload identity, annotate the `platform-api` ServiceAccount with `azure.workload.identity/client-id: <workload_identity_client_id output>` and label the pods `azure.workload.identity/use: "true"`. That overlay change is not part of this repository yet.
 
 ## Environments
 
@@ -67,7 +75,7 @@ az aks get-credentials -g "$(terraform output -raw resource_group_name)" -n "$(t
 |---|---|---|
 | Formatting | `terraform fmt -recursive -check` | style |
 | Validation | `terraform init -backend=false && terraform validate` | syntax, provider schema, references |
-| Unit tests | `terraform test` | 14 plan-only runs against a **mocked azurerm provider**, covering naming, role assignments, secure settings per module, and rejection of invalid or unsafe input |
+| Unit tests | `terraform test` | 14 runs against a **mocked azurerm provider** (two use `apply` on the mock to fill computed identity IDs; nothing real is created), covering naming, identity wiring, secure settings per module, and rejection of invalid or unsafe input |
 | Static security | `checkov -d terraform` | 32 passed, 0 failed, 11 suppressed in code with a written reason |
 
 Mocked plans prove the configuration's *logic*. They cannot prove that Azure accepts every setting together (quotas, feature registrations, regional VM availability). Only a real `plan`/`apply` against a subscription can show that.

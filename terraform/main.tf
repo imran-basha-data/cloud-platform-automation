@@ -82,8 +82,60 @@ module "key_vault" {
   tags                = local.tags
 }
 
+# ---------------------------------------------------------------------------
+# Identities. Created before the cluster so permissions exist up front.
+# ---------------------------------------------------------------------------
+
+resource "azurerm_user_assigned_identity" "aks_control_plane" {
+  name                = "id-${local.name_prefix}-aks"
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  tags                = local.tags
+}
+
+resource "azurerm_user_assigned_identity" "aks_kubelet" {
+  name                = "id-${local.name_prefix}-kubelet"
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  tags                = local.tags
+}
+
+# Identity the application pods assume through workload identity federation.
+resource "azurerm_user_assigned_identity" "workload" {
+  name                = "id-${local.name_prefix}-platform-api"
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  tags                = local.tags
+}
+
+# AKS needs to assign the kubelet identity to its nodes.
+resource "azurerm_role_assignment" "aks_kubelet_operator" {
+  scope                = azurerm_user_assigned_identity.aks_kubelet.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.aks_control_plane.principal_id
+}
+
+# Azure CNI in a custom VNet needs to manage the node subnet.
+resource "azurerm_role_assignment" "aks_subnet_network" {
+  scope                = module.network.aks_subnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_control_plane.principal_id
+}
+
 module "aks" {
   source = "./modules/aks"
+
+  depends_on = [
+    azurerm_role_assignment.aks_kubelet_operator,
+    azurerm_role_assignment.aks_subnet_network,
+  ]
+
+  control_plane_identity_id = azurerm_user_assigned_identity.aks_control_plane.id
+  kubelet_identity = {
+    id        = azurerm_user_assigned_identity.aks_kubelet.id
+    client_id = azurerm_user_assigned_identity.aks_kubelet.client_id
+    object_id = azurerm_user_assigned_identity.aks_kubelet.principal_id
+  }
 
   name                       = "aks-${local.name_prefix}"
   resource_group_name        = azurerm_resource_group.this.name
@@ -103,17 +155,28 @@ module "aks" {
   tags                       = local.tags
 }
 
-# Nodes pull images from ACR with their managed identity; no registry passwords.
+# Nodes pull images from ACR with the kubelet identity; no registry passwords.
 resource "azurerm_role_assignment" "aks_acr_pull" {
   scope                            = module.container_registry.id
   role_definition_name             = "AcrPull"
-  principal_id                     = module.aks.kubelet_object_id
+  principal_id                     = azurerm_user_assigned_identity.aks_kubelet.principal_id
   skip_service_principal_aad_check = true
 }
 
-# The Key Vault CSI driver add-on reads secrets with its own identity.
-resource "azurerm_role_assignment" "aks_key_vault_secrets" {
+# The application reads its secrets from Key Vault as its own identity
+# (least privilege per workload, not one shared add-on identity).
+resource "azurerm_role_assignment" "workload_key_vault_secrets" {
   scope                = module.key_vault.id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = module.aks.key_vault_secrets_provider_object_id
+  principal_id         = azurerm_user_assigned_identity.workload.principal_id
+}
+
+# Trust tokens issued to the platform-api ServiceAccount by this cluster.
+resource "azurerm_federated_identity_credential" "workload" {
+  name                = "platform-api-${var.environment}"
+  resource_group_name = azurerm_resource_group.this.name
+  parent_id           = azurerm_user_assigned_identity.workload.id
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = module.aks.oidc_issuer_url
+  subject             = "system:serviceaccount:platform-${var.environment}:platform-api"
 }

@@ -18,6 +18,20 @@ variable "tenant_id" {
   type        = string
 }
 
+variable "control_plane_identity_id" {
+  description = "Resource ID of the user-assigned identity for the AKS control plane."
+  type        = string
+}
+
+variable "kubelet_identity" {
+  description = "User-assigned identity used by the nodes (kubelet) to pull images."
+  type = object({
+    id        = string
+    client_id = string
+    object_id = string
+  })
+}
+
 variable "kubernetes_version" {
   description = "Kubernetes minor version, or null for the AKS default."
   type        = string

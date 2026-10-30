@@ -48,8 +48,17 @@ resource "azurerm_kubernetes_cluster" "this" {
     }
   }
 
+  # Pre-created identities: role assignments exist before the cluster does,
+  # so there is no race between cluster creation and its permissions.
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [var.control_plane_identity_id]
+  }
+
+  kubelet_identity {
+    client_id                 = var.kubelet_identity.client_id
+    object_id                 = var.kubelet_identity.object_id
+    user_assigned_identity_id = var.kubelet_identity.id
   }
 
   network_profile {

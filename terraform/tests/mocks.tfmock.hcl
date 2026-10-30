@@ -12,20 +12,15 @@ mock_resource "azurerm_kubernetes_cluster" {
   defaults = {
     id              = "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/aks"
     oidc_issuer_url = "https://uksouth.oic.prod-aks.azure.com/tenant/issuer/"
-    kubelet_identity = [{
-      client_id                 = "00000000-0000-0000-0000-000000000011"
-      object_id                 = "00000000-0000-0000-0000-000000000012"
-      user_assigned_identity_id = "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/kubelet"
-    }]
-    key_vault_secrets_provider = [{
-      secret_rotation_enabled  = true
-      secret_rotation_interval = "2m"
-      secret_identity = [{
-        client_id                 = "00000000-0000-0000-0000-000000000021"
-        object_id                 = "00000000-0000-0000-0000-000000000022"
-        user_assigned_identity_id = "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/kv"
-      }]
-    }]
+  }
+}
+
+mock_resource "azurerm_user_assigned_identity" {
+  defaults = {
+    id           = "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id"
+    client_id    = "00000000-0000-0000-0000-000000000011"
+    principal_id = "00000000-0000-0000-0000-000000000012"
+    tenant_id    = "00000000-0000-0000-0000-000000000001"
   }
 }
 

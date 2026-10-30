@@ -27,3 +27,8 @@ output "log_analytics_workspace_id" {
   description = "Workspace receiving AKS Container Insights data."
   value       = module.monitoring.workspace_id
 }
+
+output "workload_identity_client_id" {
+  description = "Client ID to put in the platform-api ServiceAccount annotation azure.workload.identity/client-id."
+  value       = azurerm_user_assigned_identity.workload.client_id
+}

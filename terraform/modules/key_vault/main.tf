@@ -8,7 +8,7 @@ resource "azurerm_key_vault" "this" {
   sku_name            = "standard"
 
   # Azure RBAC instead of legacy access policies.
-  enable_rbac_authorization  = true
+  rbac_authorization_enabled = true
   purge_protection_enabled   = true
   soft_delete_retention_days = 90
 

@@ -152,7 +152,7 @@ run "key_vault_uses_rbac_purge_protection_and_firewall" {
   }
 
   assert {
-    condition     = azurerm_key_vault.this.enable_rbac_authorization && azurerm_key_vault.this.purge_protection_enabled
+    condition     = azurerm_key_vault.this.rbac_authorization_enabled && azurerm_key_vault.this.purge_protection_enabled
     error_message = "Key Vault must use RBAC and purge protection"
   }
   assert {

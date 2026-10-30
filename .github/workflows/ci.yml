@@ -185,3 +185,38 @@ jobs:
         run: checkov -d rendered --framework kubernetes --compact --quiet
       - name: Checkov Dockerfile
         run: checkov -f Dockerfile --framework dockerfile --compact --quiet
+
+  observability:
+    name: Monitoring config, alert tests and stack smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: promtool check config and rules
+        run: |
+          docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus" --entrypoint promtool \
+            prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+      - name: promtool unit-test alerting and recording rules
+        run: |
+          docker run --rm -v "$PWD/monitoring/prometheus:/p" -w /p --entrypoint promtool \
+            prom/prometheus:v3.5.0 test rules alerts.test.yml
+      - name: Dashboard lint
+        run: |
+          python3 - <<'PY'
+          import json
+          d = json.load(open("monitoring/grafana/dashboards/platform-api.json"))
+          assert d["uid"] == "platform-api"
+          for p in d["panels"]:
+              assert p["datasource"]["uid"] == "prometheus", p["title"]
+              assert p["targets"] and all(t["expr"].strip() for t in p["targets"]), p["title"]
+          print(f"{len(d['panels'])} panels OK")
+          PY
+      - name: Start stack
+        run: docker compose -f monitoring/docker-compose.yml up -d --build
+      - name: Smoke test
+        run: ./scripts/verify-monitoring.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f monitoring/docker-compose.yml logs --tail=80
+      - name: Tear down
+        if: always()
+        run: docker compose -f monitoring/docker-compose.yml down -v

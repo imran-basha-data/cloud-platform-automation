@@ -173,7 +173,8 @@ resource "azurerm_role_assignment" "workload_key_vault_secrets" {
 
 # Trust tokens issued to the platform-api ServiceAccount by this cluster.
 resource "azurerm_federated_identity_credential" "workload" {
-  name                = "platform-api-${var.environment}"
+  name = "platform-api-${var.environment}"
+  # Deprecated by the provider (warning only) but still accepted across 4.x.
   resource_group_name = azurerm_resource_group.this.name
   parent_id           = azurerm_user_assigned_identity.workload.id
   audience            = ["api://AzureADTokenExchange"]

@@ -2,6 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: platform-api
+  annotations:
+    # Accepted Checkov findings, each with its reason:
+    checkov.io/skip1: CKV_K8S_43=Tags are pinned per release in the overlay; the release pipeline should resolve them to digests at deploy time.
+    checkov.io/skip2: CKV_K8S_35=Single non-file secret read once at startup via secretKeyRef; mounting as a file is a follow-up.
+    checkov.io/skip3: CKV_K8S_15=IfNotPresent in dev so locally loaded kind images work; the prod overlay sets Always.
 spec:
   replicas: 2
   revisionHistoryLimit: 5

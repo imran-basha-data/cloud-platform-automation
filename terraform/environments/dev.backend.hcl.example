@@ -1,0 +1,6 @@
+# Copy to dev.backend.hcl and fill in. Uses Entra ID auth to the storage account.
+resource_group_name  = "rg-tfstate"
+storage_account_name = "sttfstateCHANGEME"
+container_name       = "tfstate"
+key                  = "platform/dev.tfstate"
+use_azuread_auth     = true

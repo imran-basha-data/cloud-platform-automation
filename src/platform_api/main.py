@@ -44,7 +44,23 @@ class AppState:
     started: bool = False
     draining: bool = False
     maintenance: bool = False
+    # Result of the most recent dependency check; None until the first check.
+    dependency_ok: bool | None = None
     started_monotonic: float = field(default_factory=time.monotonic)
+
+    def local_checks(self) -> dict[str, bool]:
+        """Readiness conditions that need no I/O."""
+        return {
+            "started": self.started,
+            "not_draining": not self.draining,
+            "not_in_maintenance": not self.maintenance,
+            "fault_injection_off": not self.settings.fail_readiness,
+        }
+
+    def is_ready_for_metrics(self) -> float:
+        """Readiness as seen at scrape time, using the last dependency result."""
+        dependency = self.settings.dependency_url is None or self.dependency_ok is True
+        return 1.0 if dependency and all(self.local_checks().values()) else 0.0
 
 
 class ReadinessReport(BaseModel):
@@ -69,12 +85,20 @@ def create_app(
         settings.environment,
         settings.version,
     )
-    metrics = build_metrics(settings.name, settings.version, settings.environment)
+    metrics = build_metrics(
+        settings.name,
+        settings.version,
+        settings.environment,
+        dependency_configured=settings.dependency_url is not None,
+    )
     state = AppState(
         settings=settings,
         metrics=metrics,
         http_client=http_client or httpx.AsyncClient(timeout=settings.dependency_timeout_s),
     )
+    # Evaluated on every scrape, so the metric is correct even when nothing
+    # calls /readyz (e.g. outside Kubernetes).
+    metrics.ready.set_function(state.is_ready_for_metrics)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -89,7 +113,6 @@ def create_app(
         finally:
             # Stop advertising readiness first so load balancers drain this pod.
             state.draining = True
-            metrics.ready.set(0)
             if warmup is not None:
                 warmup.cancel()
             await state.http_client.aclose()
@@ -216,19 +239,11 @@ async def _warm_up(state: AppState, delay_s: float) -> None:
 
 
 async def _readiness(state: AppState) -> ReadinessReport:
-    settings = state.settings
-    checks = {
-        "started": state.started,
-        "not_draining": not state.draining,
-        "not_in_maintenance": not state.maintenance,
-        "fault_injection_off": not settings.fail_readiness,
-    }
-    if settings.dependency_url is not None:
+    checks = state.local_checks()
+    if state.settings.dependency_url is not None:
         checks["dependency"] = await _dependency_ok(state)
     reasons = [name for name, ok in checks.items() if not ok]
-    ready = not reasons
-    state.metrics.ready.set(1 if ready else 0)
-    return ReadinessReport(ready=ready, checks=checks, reasons=reasons)
+    return ReadinessReport(ready=not reasons, checks=checks, reasons=reasons)
 
 
 async def _dependency_ok(state: AppState) -> bool:
@@ -239,7 +254,9 @@ async def _dependency_ok(state: AppState) -> bool:
     except httpx.HTTPError as exc:
         log.warning("dependency_unreachable", extra={"fields": {"error": type(exc).__name__}})
         ok = False
-    state.metrics.dependency_up.set(1 if ok else 0)
+    state.dependency_ok = ok
+    if state.metrics.dependency_up is not None:
+        state.metrics.dependency_up.set(1 if ok else 0)
     return ok
 
 

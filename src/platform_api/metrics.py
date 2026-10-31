@@ -23,10 +23,14 @@ class Metrics:
     app_info: Gauge
     ready: Gauge
     maintenance: Gauge
-    dependency_up: Gauge
+    # Only registered when a dependency is configured, so an instance without
+    # one never exports a misleading 0 that would trigger the dependency alert.
+    dependency_up: Gauge | None
 
 
-def build_metrics(service: str, version: str, environment: str) -> Metrics:
+def build_metrics(
+    service: str, version: str, environment: str, *, dependency_configured: bool = False
+) -> Metrics:
     registry = CollectorRegistry()
     app_info = Gauge(
         "app_info",
@@ -60,9 +64,13 @@ def build_metrics(service: str, version: str, environment: str) -> Metrics:
         maintenance=Gauge(
             "app_maintenance_mode", "1 when maintenance mode is enabled.", registry=registry
         ),
-        dependency_up=Gauge(
-            "app_dependency_up",
-            "1 when the configured downstream dependency answered its last check.",
-            registry=registry,
+        dependency_up=(
+            Gauge(
+                "app_dependency_up",
+                "1 when the configured downstream dependency answered its last check.",
+                registry=registry,
+            )
+            if dependency_configured
+            else None
         ),
     )

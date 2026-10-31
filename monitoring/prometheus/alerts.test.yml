@@ -1,0 +1,123 @@
+# Unit tests for alerting and recording rules:  promtool test rules alerts.test.yml
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: target down fires only after 1 minute
+    interval: 1m
+    input_series:
+      - series: 'up{job="platform-api", instance="api:8080"}'
+        values: "1 0 0 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: PlatformApiDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PlatformApiDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: platform-api
+              instance: api:8080
+            exp_annotations:
+              summary: "Platform API target api:8080 is down"
+              description: "Prometheus has failed to scrape api:8080 for over 1 minute."
+              runbook: "k8s/README.md#rollback-procedure"
+
+  - name: high error rate fires above 5 percent
+    interval: 1m
+    input_series:
+      # 100 requests/min, of which 10/min are 5xx -> 10% error ratio.
+      - series: 'http_requests_total{job="platform-api", route="/api/v1/info", status="200", method="GET"}'
+        values: "0+90x15"
+      - series: 'http_requests_total{job="platform-api", route="/api/v1/info", status="500", method="GET"}'
+        values: "0+10x15"
+    promql_expr_test:
+      - expr: round(job:http_request_errors:ratio_rate5m, 0.001)
+        eval_time: 10m
+        exp_samples:
+          - labels: '{job="platform-api"}'
+            value: 0.1
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PlatformApiHighErrorRate
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: PlatformApiHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: platform-api
+            exp_annotations:
+              summary: "More than 5% of Platform API requests are failing"
+              description: "5xx ratio is 10% over the last 5 minutes."
+
+  - name: error ratio is an explicit zero when nothing fails
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="platform-api", route="/api/v1/info", status="200", method="GET"}'
+        values: "0+100x10"
+    promql_expr_test:
+      - expr: job:http_request_errors:ratio_rate5m
+        eval_time: 8m
+        exp_samples:
+          - labels: 'job:http_request_errors:ratio_rate5m{job="platform-api"}'
+            value: 0
+
+  - name: probe and metrics traffic is excluded from the error ratio
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="platform-api", route="/api/v1/info", status="200", method="GET"}'
+        values: "0+100x15"
+      - series: 'http_requests_total{job="platform-api", route="/readyz", status="503", method="GET"}'
+        values: "0+50x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PlatformApiHighErrorRate
+        exp_alerts: []
+
+  - name: not-ready alert needs 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'app_ready{job="platform-api", instance="api:8080"}'
+        values: "1 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PlatformApiNotReady
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: PlatformApiNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: platform-api
+              instance: api:8080
+            exp_annotations:
+              summary: "Platform API instance api:8080 is not ready"
+              description: "The instance has reported not ready for 5 minutes and receives no traffic. Check /readyz for the failing check."
+
+  - name: p95 latency alert
+    interval: 1m
+    input_series:
+      # All requests land in the 1s bucket -> p95 well above 500 ms.
+      - series: 'http_request_duration_seconds_bucket{job="platform-api", route="/api/v1/work", method="GET", le="0.5"}'
+        values: "0+0x20"
+      - series: 'http_request_duration_seconds_bucket{job="platform-api", route="/api/v1/work", method="GET", le="1.0"}'
+        values: "0+60x20"
+      - series: 'http_request_duration_seconds_bucket{job="platform-api", route="/api/v1/work", method="GET", le="+Inf"}'
+        values: "0+60x20"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: PlatformApiHighLatency
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: PlatformApiHighLatency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: platform-api
+            exp_annotations:
+              summary: "Platform API p95 latency above 500 ms"
+              description: "p95 latency is 975ms over the last 5 minutes."
